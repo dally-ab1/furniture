@@ -1,0 +1,16 @@
+{
+  "name": "furnierp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Furniture ERP for manufacturing and retail operations in Ethiopia",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev:backend": "npm run --prefix backend dev",
+    "dev:frontend": "npm run --prefix frontend dev",
+    "build:backend": "npm run --prefix backend build",
+    "build:frontend": "npm run --prefix frontend build"
+  }
+}
