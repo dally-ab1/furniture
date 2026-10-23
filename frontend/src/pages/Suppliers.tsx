@@ -3,9 +3,8 @@ import {
   Truck, Trash2, Search, Plus, X, Phone, Mail, MapPin, User, Loader2, AlertCircle,
   ChevronRight, CreditCard, RefreshCw, ArrowLeft
 } from 'lucide-react';
-import { authFetch } from '../services/api';
+import { authFetch, API_BASE } from '../services/api';
 
-const API_BASE = 'http://localhost:5000/api';
 
 interface Supplier {
   id: string;

@@ -3,9 +3,8 @@ import {
   Building2, Save, MapPin,
   CheckCircle2, Loader2, Map
 } from 'lucide-react';
-import { authFetch } from '../services/api';
+import { authFetch, API_BASE } from '../services/api';
 
-const API_BASE = 'http://localhost:5000/api';
 
 interface Location {
   id: string;

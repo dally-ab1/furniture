@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { authFetch } from '../services/api';
+import { authFetch, API_BASE } from '../services/api';
 import { 
   ShoppingCart, 
   Search, 
@@ -21,7 +21,6 @@ import {
   Package
 } from 'lucide-react';
 
-const API_BASE = 'http://localhost:5000/api';
 
 interface Product {
   id: string;

@@ -3,9 +3,8 @@ import {
   Users, Trash2, Search, Plus, X, Phone, Mail, MapPin, Loader2, AlertCircle,
   ChevronRight, CreditCard, ShoppingCart, ArrowLeft, RefreshCw, Cog
 } from 'lucide-react';
-import { authFetch } from '../services/api';
+import { authFetch, API_BASE } from '../services/api';
 
-const API_BASE = 'http://localhost:5000/api';
 
 interface Customer {
   id: string;

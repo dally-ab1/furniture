@@ -7,9 +7,8 @@ import {
   AlertCircle, Eye, Receipt, Trash2, ArrowLeft,
   Layers, Percent, Building2
 } from 'lucide-react';
-import { authFetch } from '../services/api';
+import { authFetch, API_BASE } from '../services/api';
 
-const API_BASE = 'http://localhost:5000/api';
 
 // Format ETB currency cleanly
 const formatETB = (val: number): string => {

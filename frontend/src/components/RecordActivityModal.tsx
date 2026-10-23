@@ -3,9 +3,8 @@ import {
   Clock, X, Loader2, ShieldCheck, UserCheck,
   AlertCircle, ChevronRight, FileText
 } from 'lucide-react';
-import { authFetch } from '../services/api';
+import { authFetch, API_BASE } from '../services/api';
 
-const API_BASE = 'http://localhost:5000/api';
 
 export interface RecordActivityEvent {
   id: string;

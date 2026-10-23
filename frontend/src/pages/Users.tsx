@@ -6,9 +6,8 @@ import {
   ChevronLeft, ChevronRight, Eye, SlidersHorizontal,
   Clock, Edit3, KeyRound, EyeOff, Save, RotateCcw
 } from 'lucide-react';
-import { authFetch } from '../services/api';
+import { authFetch, API_BASE } from '../services/api';
 
-const API_BASE = 'http://localhost:5000/api';
 
 interface UserProfile {
   id: string;

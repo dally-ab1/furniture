@@ -4,7 +4,7 @@ import {
   ArrowRight, UserCheck, Shield
 } from 'lucide-react';
 
-const API_BASE = 'http://localhost:5000/api';
+import { API_BASE } from '../services/api';
 
 const DEFAULT_EMPLOYEE_PERMISSIONS = [
   { key: 'sales.create', label: 'Create POS Sales & Orders', module: 'Sales' },

@@ -7,9 +7,8 @@ import {
   ShieldCheck, Check, Layers
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { authFetch } from '../services/api';
+import { authFetch, API_BASE } from '../services/api';
 
-const API_BASE = 'http://localhost:5000/api';
 
 export interface DeletedRecord {
   id: string;
