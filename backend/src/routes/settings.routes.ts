@@ -180,6 +180,7 @@ settingsRouter.get('/users', async (_req: Request, res: Response, next: NextFunc
 
     const enriched = (users || []).map(u => ({
       ...u,
+      is_owner: u.is_owner === true || u.username === 'abdallah' || u.id === 'a07dfa6a-a70c-4fbc-9086-38ac8f32e62e',
       permissions: u.role === 'SUPER_ADMIN' ? ['*'] : (permMap.get(u.id) || []),
     }));
 
@@ -350,6 +351,17 @@ settingsRouter.put('/users/:id/role', async (req: Request, res: Response, next: 
       return;
     }
 
+    // Permanent Security Safeguard: Protect Primary Owner account (Abdallah)
+    if (existing.is_owner || existing.username === 'abdallah' || id === 'a07dfa6a-a70c-4fbc-9086-38ac8f32e62e') {
+      if (role !== 'SUPER_ADMIN') {
+        res.status(403).json({
+          success: false,
+          error: 'Permanent Security Safeguard: The Primary Owner account (Abdallah) is permanently protected and cannot be demoted.',
+        });
+        return;
+      }
+    }
+
     if (role === 'SUPER_ADMIN' && existing.role !== 'SUPER_ADMIN') {
       const activeAdminCount = await getActiveSuperAdminCount(id);
 
@@ -415,6 +427,17 @@ settingsRouter.put('/users/:id/status', async (req: Request, res: Response, next
     if (findError || !existing) {
       res.status(404).json({ success: false, error: 'User not found' });
       return;
+    }
+
+    // Permanent Security Safeguard: Protect Primary Owner account (Abdallah)
+    if (existing.is_owner || existing.username === 'abdallah' || id === 'a07dfa6a-a70c-4fbc-9086-38ac8f32e62e') {
+      if (!isActive) {
+        res.status(403).json({
+          success: false,
+          error: 'Permanent Security Safeguard: The Primary Owner account (Abdallah) is permanently protected and cannot be deactivated.',
+        });
+        return;
+      }
     }
 
     if (existing.role === 'SUPER_ADMIN' && !isActive) {
@@ -484,6 +507,24 @@ settingsRouter.put('/users/:id', async (req: Request, res: Response, next: NextF
     if (findError || !existing) {
       res.status(404).json({ success: false, error: 'User account not found' });
       return;
+    }
+
+    // Permanent Security Safeguard: Protect Primary Owner account (Abdallah)
+    if (existing.is_owner || existing.username === 'abdallah' || id === 'a07dfa6a-a70c-4fbc-9086-38ac8f32e62e') {
+      if (validated.role && validated.role !== 'SUPER_ADMIN') {
+        res.status(403).json({
+          success: false,
+          error: 'Permanent Security Safeguard: The Primary Owner account (Abdallah) is permanently protected and cannot be demoted.',
+        });
+        return;
+      }
+      if (validated.isActive === false) {
+        res.status(403).json({
+          success: false,
+          error: 'Permanent Security Safeguard: The Primary Owner account (Abdallah) is permanently protected and cannot be deactivated.',
+        });
+        return;
+      }
     }
 
     if (validated.role === 'SUPER_ADMIN' && existing.role !== 'SUPER_ADMIN') {
@@ -901,6 +942,15 @@ settingsRouter.delete('/users/:id', async (req: Request, res: Response, next: Ne
 
     if (findError || !existing) {
       res.status(404).json({ success: false, error: 'User not found or already deleted' });
+      return;
+    }
+
+    // Permanent Security Safeguard: Protect Primary Owner account (Abdallah)
+    if (existing.is_owner || existing.username === 'abdallah' || id === 'a07dfa6a-a70c-4fbc-9086-38ac8f32e62e') {
+      res.status(403).json({
+        success: false,
+        error: 'Permanent Security Safeguard: The Primary Owner account (Abdallah) is permanently protected and cannot be deleted.',
+      });
       return;
     }
 

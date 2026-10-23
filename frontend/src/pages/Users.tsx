@@ -19,6 +19,7 @@ interface UserProfile {
   created_at: string;
   email?: string;
   permissions?: string[];
+  is_owner?: boolean;
 }
 
 interface AuditLogEntry {
@@ -415,6 +416,10 @@ export const Users: React.FC = () => {
 
   // Toggle Account Status (Deactivate / Reactivate)
   const handleToggleUserStatus = async (user: UserProfile) => {
+    if ((user.is_owner || user.username === 'abdallah' || user.id === 'a07dfa6a-a70c-4fbc-9086-38ac8f32e62e') && user.is_active) {
+      alert('Permanent Security Safeguard: The Primary Owner account (Abdallah) is permanently protected and cannot be deactivated.');
+      return;
+    }
     const actionWord = user.is_active ? 'deactivate' : 'reactivate';
     const activeSuperAdmins = users.filter(u => u.role === 'SUPER_ADMIN' && u.is_active);
 
@@ -456,6 +461,10 @@ export const Users: React.FC = () => {
 
   // Toggle Role (Super Admin vs Employee)
   const handleToggleUserRole = async (user: UserProfile) => {
+    if (user.is_owner || user.username === 'abdallah' || user.id === 'a07dfa6a-a70c-4fbc-9086-38ac8f32e62e') {
+      alert('Permanent Security Safeguard: The Primary Owner account (Abdallah) is permanently protected and cannot be demoted.');
+      return;
+    }
     const newRole = user.role === 'SUPER_ADMIN' ? 'EMPLOYEE' : 'SUPER_ADMIN';
     const activeSuperAdmins = users.filter(u => u.role === 'SUPER_ADMIN' && u.is_active);
 
@@ -500,6 +509,10 @@ export const Users: React.FC = () => {
 
   // Soft-delete user account to Recovery Center
   const handleDeleteUser = async (user: UserProfile) => {
+    if (user.is_owner || user.username === 'abdallah' || user.id === 'a07dfa6a-a70c-4fbc-9086-38ac8f32e62e') {
+      alert('Permanent Security Safeguard: The Primary Owner account (Abdallah) is permanently protected and cannot be deleted or moved to Recovery Center.');
+      return;
+    }
     const activeSuperAdmins = users.filter(u => u.role === 'SUPER_ADMIN' && u.is_active);
 
     if (user.role === 'SUPER_ADMIN' && user.is_active && activeSuperAdmins.length <= 1) {
@@ -789,7 +802,12 @@ export const Users: React.FC = () => {
                         <div className="text-xs text-[#8C948D] font-mono">{u.id}</div>
                       </td>
                       <td className="py-3.5 px-4">
-                        {u.role === 'SUPER_ADMIN' ? (
+                        {u.is_owner || u.username === 'abdallah' ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-300">
+                            <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
+                            System Owner
+                          </span>
+                        ) : u.role === 'SUPER_ADMIN' ? (
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-[#EAF3EC] text-[#276749] border border-[#C8DEC9]">
                             <ShieldCheck className="w-3.5 h-3.5" />
                             Super Admin
@@ -1213,7 +1231,12 @@ export const Users: React.FC = () => {
                       )}
                     </h2>
                   </div>
-                  {selectedUser.role === 'SUPER_ADMIN' ? (
+                  {selectedUser.is_owner || selectedUser.username === 'abdallah' ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-300">
+                      <ShieldCheck className="w-3 h-3 text-amber-600" />
+                      System Owner (Protected)
+                    </span>
+                  ) : selectedUser.role === 'SUPER_ADMIN' ? (
                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-[#EAF3EC] text-[#276749] border border-[#C8DEC9]">
                       <ShieldCheck className="w-3 h-3" />
                       Super Admin
@@ -1633,36 +1656,45 @@ export const Users: React.FC = () => {
                       Role upgrades and account deactivations require server authorization and are permanently recorded in the audit trail.
                     </p>
 
-                    <div className="flex flex-wrap gap-3 pt-2">
-                      <button
-                        onClick={() => handleToggleUserRole(selectedUser)}
-                        className="px-4 py-2 border border-[#E3E7E1] hover:border-[#276749] text-xs font-semibold rounded-xl text-[#202820] hover:text-[#276749] transition-colors"
-                      >
-                        {selectedUser.role === 'SUPER_ADMIN' ? 'Demote to EMPLOYEE Role' : 'Promote to SUPER_ADMIN Role'}
-                      </button>
+                    {selectedUser.is_owner || selectedUser.username === 'abdallah' ? (
+                      <div className="p-3.5 bg-amber-50/80 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-start gap-2.5">
+                        <ShieldCheck className="w-4 h-4 mt-0.5 text-amber-600 shrink-0" />
+                        <div>
+                          <span className="font-bold">Permanent Primary Owner Account (Abdallah):</span> This account is permanently protected at the application, API, and database levels. Deletion, deactivation, and role demotion are strictly prohibited.
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap gap-3 pt-2">
+                        <button
+                          onClick={() => handleToggleUserRole(selectedUser)}
+                          className="px-4 py-2 border border-[#E3E7E1] hover:border-[#276749] text-xs font-semibold rounded-xl text-[#202820] hover:text-[#276749] transition-colors"
+                        >
+                          {selectedUser.role === 'SUPER_ADMIN' ? 'Demote to EMPLOYEE Role' : 'Promote to SUPER_ADMIN Role'}
+                        </button>
 
-                      <button
-                        onClick={() => handleDeleteUser(selectedUser)}
-                        className="px-4 py-2 text-xs font-semibold rounded-xl border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 transition-colors flex items-center gap-1.5"
-                        title="Move to Recovery Center / Recycle Bin"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        Move to Recovery Center
-                      </button>
+                        <button
+                          onClick={() => handleDeleteUser(selectedUser)}
+                          className="px-4 py-2 text-xs font-semibold rounded-xl border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 transition-colors flex items-center gap-1.5"
+                          title="Move to Recovery Center / Recycle Bin"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          Move to Recovery Center
+                        </button>
 
-                      <button
-                        onClick={() => handleToggleUserStatus(selectedUser)}
-                        className={`px-4 py-2 text-xs font-semibold rounded-xl border transition-colors ${
-                          selectedUser.is_active
-                            ? 'border-[#FECACA] bg-[#FEF2F2] text-[#DC2626] hover:bg-[#FEE2E2]'
-                            : 'border-[#C8DEC9] bg-[#EAF3EC] text-[#276749] hover:bg-[#D4E8D7]'
-                        }`}
-                      >
-                        {selectedUser.is_active
-                          ? (selectedUser.role === 'SUPER_ADMIN' ? 'Deactivate Super Admin' : 'Deactivate Employee Account')
-                          : (selectedUser.role === 'SUPER_ADMIN' ? 'Reactivate Super Admin' : 'Reactivate Employee Account')}
-                      </button>
-                    </div>
+                        <button
+                          onClick={() => handleToggleUserStatus(selectedUser)}
+                          className={`px-4 py-2 text-xs font-semibold rounded-xl border transition-colors ${
+                            selectedUser.is_active
+                              ? 'border-[#FECACA] bg-[#FEF2F2] text-[#DC2626] hover:bg-[#FEE2E2]'
+                              : 'border-[#C8DEC9] bg-[#EAF3EC] text-[#276749] hover:bg-[#D4E8D7]'
+                          }`}
+                        >
+                          {selectedUser.is_active
+                            ? (selectedUser.role === 'SUPER_ADMIN' ? 'Deactivate Super Admin' : 'Deactivate Employee Account')
+                            : (selectedUser.role === 'SUPER_ADMIN' ? 'Reactivate Super Admin' : 'Reactivate Employee Account')}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
