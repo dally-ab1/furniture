@@ -24,7 +24,7 @@ export async function authenticateToken(req: Request, res: Response, next: NextF
       // In development / demo mode, allow optional mock Super Admin fallback if explicitly configured
       if (process.env.ALLOW_DEV_SUPER_ADMIN === 'true') {
         req.user = {
-          id: '00000000-0000-0000-0000-000000000001',
+          id: 'a07dfa6a-a70c-4fbc-9086-38ac8f32e62e',
           email: 'admin@furnierp.com',
           role: 'SUPER_ADMIN',
           full_name: 'Super Admin',

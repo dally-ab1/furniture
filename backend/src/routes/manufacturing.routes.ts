@@ -38,6 +38,15 @@ const issueMaterialsSchema = z.object({
   })).min(1),
 });
 
+const updateProductionOrderSchema = z.object({
+  targetQuantity: z.number().positive().optional(),
+  dueDate: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+  locationId: z.string().uuid().optional(),
+  bomId: z.string().uuid().optional(),
+  customerId: z.string().uuid().nullable().optional(),
+});
+
 const completeOrderSchema = z.object({
   completedQuantity: z.number().positive(),
   wasteQuantity: z.number().nonnegative().default(0),
@@ -239,6 +248,107 @@ manufacturingRouter.post('/orders', requirePermission('manufacturing.manage'), a
     });
 
     res.status(201).json({ success: true, data: order });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// PUT /api/manufacturing/orders/:id - Update an existing production order
+manufacturingRouter.put('/orders/:id', requirePermission('manufacturing.manage'), async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const validated = updateProductionOrderSchema.parse(req.body);
+
+    const { data: existing, error: findError } = await supabase
+      .from('production_orders')
+      .select('id, order_number, status, sale_id, customer_id, target_quantity, location_id, bom_id, notes, due_date')
+      .eq('id', id)
+      .is('deleted_at', null)
+      .single();
+
+    if (findError || !existing) {
+      res.status(404).json({ success: false, error: 'Production order not found' });
+      return;
+    }
+
+    if (existing.status === 'COMPLETED' || existing.status === 'CANCELLED') {
+      res.status(400).json({
+        success: false,
+        error: `Cannot edit an order in ${existing.status} status.`,
+      });
+      return;
+    }
+
+    if (existing.status === 'IN_PROGRESS') {
+      if (
+        (validated.targetQuantity !== undefined && validated.targetQuantity !== Number(existing.target_quantity)) ||
+        (validated.bomId !== undefined && validated.bomId !== existing.bom_id) ||
+        (validated.locationId !== undefined && validated.locationId !== existing.location_id)
+      ) {
+        res.status(400).json({
+          success: false,
+          error: 'Cannot change target quantity, BOM, or factory location once materials have been issued. Only due date and notes can be updated.',
+        });
+        return;
+      }
+    }
+
+    const updates: Record<string, any> = {};
+    if (validated.targetQuantity !== undefined) updates.target_quantity = validated.targetQuantity;
+    if (validated.dueDate !== undefined) updates.due_date = validated.dueDate;
+    if (validated.notes !== undefined) updates.notes = validated.notes;
+    if (validated.locationId !== undefined) updates.location_id = validated.locationId;
+    if (validated.bomId !== undefined) updates.bom_id = validated.bomId;
+
+    // Customer can only be updated if not linked to a POS custom sale
+    if (validated.customerId !== undefined && !existing.sale_id) {
+      updates.customer_id = validated.customerId;
+    }
+
+    const { data: updated, error: updateError } = await supabase
+      .from('production_orders')
+      .update(updates)
+      .eq('id', id)
+      .select(`
+        id, order_number, target_quantity, completed_quantity, waste_quantity, status, progress_pct,
+        due_date, total_material_cost, labor_cost, notes, created_at, completed_at, customer_id, sale_id,
+        product:products (id, sku, name, unit_of_measure, cost_price, selling_price),
+        customer:customers (id, name, phone),
+        sale:sales (id, invoice_number, total_amount, status),
+        bom:boms (
+          id, name, version,
+          items:bom_items (
+            id, quantity, waste_tolerance_pct,
+            raw_material:products (id, sku, name, unit_of_measure, cost_price)
+          )
+        ),
+        location:locations (id, name, type),
+        material_issues:production_material_issues (
+          id, quantity, unit_cost, total_cost, issued_at,
+          raw_material:products (id, sku, name, unit_of_measure)
+        )
+      `)
+      .single();
+
+    if (updateError) throw updateError;
+
+    await logAudit({
+      req,
+      action: 'PRODUCTION_ORDER_UPDATED',
+      module: 'MANUFACTURING',
+      entity: 'production_orders',
+      entityId: id,
+      recordReference: existing.order_number,
+      description: `Updated production order ${existing.order_number} (${Object.keys(updates).join(', ')})`,
+      payload: {
+        orderId: id,
+        orderNumber: existing.order_number,
+        changes: updates,
+        isPosCustomOrder: Boolean(existing.sale_id),
+      },
+    });
+
+    res.json({ success: true, data: updated });
   } catch (error) {
     next(error);
   }

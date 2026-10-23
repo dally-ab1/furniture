@@ -75,6 +75,7 @@ export const Customers: React.FC = () => {
   const [payMethod, setPayMethod] = useState<'CASH' | 'BANK_TRANSFER' | 'EBIRR' | 'CBE_BIRR'>('CASH');
   const [payRef, setPayRef] = useState('');
   const [payNotes, setPayNotes] = useState('');
+  const [paySaleId, setPaySaleId] = useState('');
   const [paySubmitting, setPaySubmitting] = useState(false);
 
   const fetchCustomers = useCallback(async () => {
@@ -154,6 +155,7 @@ export const Customers: React.FC = () => {
           paymentMethod: payMethod,
           transactionReference: payRef || undefined,
           notes: payNotes || undefined,
+          saleId: paySaleId || undefined,
         }),
       });
       const json = await res.json();
@@ -224,6 +226,7 @@ export const Customers: React.FC = () => {
                 <button
                   onClick={() => {
                     setPayAmount(Number(selectedCustomer.outstanding_balance));
+                    setPaySaleId('');
                     setShowPaymentModal(true);
                   }}
                   className="mt-2.5 px-3.5 py-1.5 bg-[#276749] hover:bg-[#234A34] text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors inline-flex items-center gap-1.5"
@@ -282,7 +285,21 @@ export const Customers: React.FC = () => {
                       <td className="py-3 px-6 font-medium text-[#202820]">{sale.invoice_number}</td>
                       <td className="py-3 px-6 text-right tabular-nums">{formatETB(Number(sale.total_amount))}</td>
                       <td className="py-3 px-6 text-right tabular-nums text-[#276749]">{formatETB(Number(sale.paid_amount))}</td>
-                      <td className="py-3 px-6 text-right tabular-nums text-[#EA580C]">{formatETB(Number(sale.balance_due))}</td>
+                      <td className="py-3 px-6 text-right tabular-nums text-[#EA580C]">
+                        <div>{formatETB(Number(sale.balance_due))}</div>
+                        {Number(sale.balance_due) > 0 && (
+                          <button
+                            onClick={() => {
+                              setPaySaleId(sale.id);
+                              setPayAmount(Number(sale.balance_due));
+                              setShowPaymentModal(true);
+                            }}
+                            className="mt-1 text-[10px] text-[#276749] font-bold hover:underline inline-flex items-center gap-0.5"
+                          >
+                            Pay This Invoice
+                          </button>
+                        )}
+                      </td>
                       <td className="py-3 px-6 text-center"><StatusBadge status={sale.status} /></td>
                       <td className="py-3 px-6 text-right text-[#69736B]">
                         {new Date(sale.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
@@ -374,6 +391,33 @@ export const Customers: React.FC = () => {
                     className="w-full px-3.5 py-2.5 bg-white border border-[#E3E7E1] rounded-xl text-sm font-bold text-[#276749] focus:border-[#276749] focus:outline-hidden"
                   />
                 </div>
+
+                {selectedCustomer.sales && selectedCustomer.sales.some(s => Number(s.balance_due) > 0) && (
+                  <div>
+                    <label className="block text-xs font-semibold text-[#202820] mb-1.5">Apply Payment To</label>
+                    <select
+                      value={paySaleId}
+                      onChange={e => {
+                        const sid = e.target.value;
+                        setPaySaleId(sid);
+                        if (sid) {
+                          const matched = selectedCustomer.sales?.find(x => x.id === sid);
+                          if (matched) setPayAmount(Number(matched.balance_due));
+                        } else {
+                          setPayAmount(Number(selectedCustomer.outstanding_balance));
+                        }
+                      }}
+                      className="w-full px-3.5 py-2.5 bg-white border border-[#E3E7E1] rounded-xl text-xs text-[#202820] focus:border-[#276749] focus:outline-hidden"
+                    >
+                      <option value="">General Account (All Outstanding Debt)</option>
+                      {selectedCustomer.sales.filter(s => Number(s.balance_due) > 0).map(s => (
+                        <option key={s.id} value={s.id}>
+                          {s.invoice_number} (Due: ETB {Number(s.balance_due).toLocaleString()})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-xs font-semibold text-[#202820] mb-1.5">Payment Method *</label>

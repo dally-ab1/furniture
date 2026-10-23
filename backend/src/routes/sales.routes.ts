@@ -121,273 +121,166 @@ salesRouter.post('/checkout', requirePermission('sales.create', 'pos.create_sale
 });
 
 
-// POST /api/sales/custom-order - Create a pending-production order (no stock deduction)
+// POST /api/sales/custom-order - Create a pending-production order atomically linked to manufacturing
 const customOrderSchema = z.object({
-  invoiceNumber: z.string().min(1),
+  invoiceNumber: z.string().min(1).optional(),
   customerId: z.string().uuid(),
   locationId: z.string().uuid(),
   items: z.array(z.object({
     productId: z.string().uuid(),
-    productName: z.string(),
+    productName: z.string().optional(),
     quantity: z.number().positive(),
     unitPrice: z.number().nonnegative(),
     costPrice: z.number().nonnegative().optional(),
   })).min(1),
   depositAmount: z.number().nonnegative().default(0),
   paymentMethod: z.enum(['CASH', 'BANK_TRANSFER', 'EBIRR', 'TELEBIRR', 'CBE_BIRR']).nullable().optional(),
+  targetCompletionDate: z.string().optional(),
   notes: z.string().optional(),
 });
 
 salesRouter.post('/custom-order', requirePermission('sales.create', 'pos.create_sale'), async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const validated = customOrderSchema.parse(req.body);
-
-    // Calculate totals
     const subtotal = validated.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
     const totalAmount = subtotal;
-    const balanceDue = totalAmount - validated.depositAmount;
+    const firstItem = validated.items[0];
 
-    // 1. Create sale record with PENDING_PRODUCTION status (NO stock deduction)
-    const { data: sale, error: saleError } = await supabase
-      .from('sales')
-      .insert({
-        invoice_number: validated.invoiceNumber,
-        customer_id: validated.customerId,
-        location_id: validated.locationId,
-        subtotal,
-        discount_amount: 0,
-        total_amount: totalAmount,
-        paid_amount: validated.depositAmount,
-        balance_due: balanceDue,
-        status: 'PENDING_PRODUCTION',
-        notes: validated.notes || 'Custom order - awaiting manufacturing',
-        created_by: req.user?.id || null,
-      })
-      .select()
-      .single();
-
-    if (saleError) throw saleError;
-
-    // 2. Insert sale items (without stock deduction)
-    const saleItems = validated.items.map(item => ({
-      sale_id: sale.id,
-      product_id: item.productId,
-      quantity: item.quantity,
-      unit_price: item.unitPrice,
-      cost_price: item.costPrice || 0,
-      total_price: item.quantity * item.unitPrice,
-    }));
-
-    const { error: itemsError } = await supabase
-      .from('sale_items')
-      .insert(saleItems);
-
-    if (itemsError) throw itemsError;
-
-    // 3. Record deposit payment if any
-    if (validated.depositAmount > 0 && validated.paymentMethod) {
-      let payMethod: string = validated.paymentMethod;
-      let payNotes = 'Deposit for custom manufacturing order';
-
-      // Handle EBIRR fallback
-      if (payMethod === 'EBIRR') {
-        payMethod = 'TELEBIRR';
-        payNotes += ' [eBirr]';
-      }
-
-      await supabase
-        .from('payments')
-        .insert({
-          reference_type: 'SALE',
-          reference_id: sale.id,
-          amount: validated.depositAmount,
-          payment_method: payMethod,
-          notes: payNotes,
-          received_by: req.user?.id || null,
-        });
+    // Determine or generate unique invoice number
+    let invoiceNumber = validated.invoiceNumber;
+    if (!invoiceNumber) {
+      const { count } = await supabase.from('sales').select('id', { count: 'exact', head: true });
+      invoiceNumber = `INV-${String((count || 0) + 1).padStart(5, '0')}`;
     }
 
-    // 4. Update customer outstanding balance for the balance due
-    if (balanceDue > 0) {
-      const { data: cust } = await supabase.from('customers').select('outstanding_balance').eq('id', validated.customerId).single();
-      if (cust) {
-        await supabase
-          .from('customers')
-          .update({ outstanding_balance: Number(cust.outstanding_balance || 0) + balanceDue })
-          .eq('id', validated.customerId);
-      }
-    }
+    const effectiveUserId = req.user?.id || 'a07dfa6a-a70c-4fbc-9086-38ac8f32e62e';
 
-    const custName = validated.items.map(i => i.productName).join(', ');
-    await logAudit({
-      req,
-      action: 'CUSTOM_ORDER_CREATED',
-      module: 'SALES',
-      entity: 'sales',
-      entityId: sale.id,
-      recordReference: validated.invoiceNumber,
-      description: 'Created custom manufacturing order ' + validated.invoiceNumber + ' for ETB ' + totalAmount.toFixed(2) + (validated.depositAmount > 0 ? ' (Deposit: ETB ' + validated.depositAmount.toFixed(2) + ')' : ''),
-      payload: {
-        invoice_number: validated.invoiceNumber,
-        customer_id: validated.customerId,
-        subtotal,
-        total_amount: totalAmount,
-        deposit_amount: validated.depositAmount,
-        balance_due: balanceDue,
-        items: custName,
-        items_count: validated.items.length,
-      },
+    // Atomically create sale (PENDING_PRODUCTION) + linked production order (PLANNED) + deposit payment
+    let rpcRes = await supabase.rpc('create_custom_customer_order', {
+      p_invoice_number: invoiceNumber,
+      p_customer_id: validated.customerId,
+      p_location_id: validated.locationId,
+      p_total_amount: totalAmount,
+      p_deposit_amount: validated.depositAmount,
+      p_payment_method: validated.paymentMethod || null,
+      p_product_id: firstItem.productId,
+      p_quantity: firstItem.quantity,
+      p_unit_price: firstItem.unitPrice,
+      p_target_completion_date: validated.targetCompletionDate || new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
+      p_notes: validated.notes || null,
+      p_user_id: effectiveUserId,
     });
 
-    res.status(201).json({ success: true, data: sale });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// POST /api/sales/:id/cancel - Cancel a sale with cancellation reason
-salesRouter.post('/:id/cancel', requirePermission('sales.cancel', 'sales.view_all'), async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-  try {
-    const { id } = req.params;
-    const { reason } = req.body;
-
-    const { data: sale, error: fetchErr } = await supabase
-      .from('sales')
-      .select('id, invoice_number, total_amount, status')
-      .eq('id', id)
-      .single();
-
-    if (fetchErr || !sale) {
-      res.status(404).json({ success: false, error: 'Sale record not found' });
-      return;
-    }
-
-    if (sale.status === 'CANCELLED') {
-      res.status(400).json({ success: false, error: 'Sale is already cancelled' });
-      return;
-    }
-
-    const { error: updateErr } = await supabase
-      .from('sales')
-      .update({
-        status: 'CANCELLED',
-        notes: reason ? `[Cancelled by ${req.user?.full_name || 'User'}: ${reason}]` : `[Cancelled by ${req.user?.full_name || 'User'}]`,
-      })
-      .eq('id', id);
-
-    if (updateErr) throw updateErr;
-
-    await logAudit({
-      req,
-      action: 'SALE_CANCELLED',
-      module: 'SALES',
-      entity: 'sales',
-      entityId: id,
-      recordReference: sale.invoice_number,
-      description: `${req.user?.full_name || 'User'} cancelled sale ${sale.invoice_number}${reason ? `. Reason: ${reason}` : ''}`,
-      reason: reason || null,
-      payload: {
-        invoice_number: sale.invoice_number,
-        total_amount: sale.total_amount,
-        reason: reason || 'Not specified',
-      },
-    });
-
-    res.json({ success: true, message: `Sale ${sale.invoice_number} cancelled successfully` });
-  } catch (error) {
-    next(error);
-  }
-});
-
-
-// PATCH /api/sales/:id/fulfill - Fulfill a PENDING_PRODUCTION sale after manufacturing completes
-salesRouter.patch('/:id/fulfill', requirePermission('sales.create', 'pos.create_sale'), async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-  try {
-    const { id } = req.params;
-
-    // Get the pending sale
-    const { data: sale, error: fetchErr } = await supabase
-      .from('sales')
-      .select('id, invoice_number, total_amount, paid_amount, balance_due, status, customer_id, location_id')
-      .eq('id', id)
-      .single();
-
-    if (fetchErr || !sale) {
-      res.status(404).json({ success: false, error: 'Sale record not found' });
-      return;
-    }
-
-    if (sale.status !== 'PENDING_PRODUCTION') {
-      res.status(400).json({ success: false, error: 'Only PENDING_PRODUCTION sales can be fulfilled' });
-      return;
-    }
-
-    // Determine new status based on payment
-    const newStatus = sale.balance_due <= 0 ? 'PAID' : (sale.paid_amount > 0 ? 'PARTIAL' : 'CREDIT');
-
-    // Get sale items to deduct stock
-    const { data: saleItems, error: itemsErr } = await supabase
-      .from('sale_items')
-      .select('product_id, quantity')
-      .eq('sale_id', id);
-
-    if (itemsErr) throw itemsErr;
-
-    // Deduct stock for each item
-    for (const item of (saleItems || [])) {
-      const { data: stockData } = await supabase
-        .from('stock_levels')
-        .select('quantity')
-        .eq('product_id', item.product_id)
-        .eq('location_id', sale.location_id)
-        .single();
-
-      if (!stockData || Number(stockData.quantity) < Number(item.quantity)) {
-        res.status(400).json({
-          success: false,
-          error: 'Insufficient stock. Available: ' + (stockData?.quantity || 0) + ', Required: ' + item.quantity + '. Complete manufacturing first.',
-        });
-        return;
-      }
-
-      // Deduct stock
-      await supabase
-        .from('stock_levels')
-        .update({ quantity: Number(stockData.quantity) - Number(item.quantity) })
-        .eq('product_id', item.product_id)
-        .eq('location_id', sale.location_id);
-
-      // Record inventory movement
-      await supabase.from('inventory_movements').insert({
-        product_id: item.product_id,
-        location_id: sale.location_id,
-        movement_type: 'SALE_DEDUCTION',
-        quantity: -Number(item.quantity),
-        reference_id: id,
-        notes: 'Stock deducted for fulfilled custom order ' + sale.invoice_number,
+    if (rpcRes.error && rpcRes.error.message?.includes('payments_payment_method_check') && validated.paymentMethod === 'EBIRR') {
+      rpcRes = await supabase.rpc('create_custom_customer_order', {
+        p_invoice_number: validated.invoiceNumber,
+        p_customer_id: validated.customerId,
+        p_location_id: validated.locationId,
+        p_total_amount: totalAmount,
+        p_deposit_amount: validated.depositAmount,
+        p_payment_method: 'TELEBIRR',
+        p_product_id: firstItem.productId,
+        p_quantity: firstItem.quantity,
+        p_unit_price: firstItem.unitPrice,
+        p_target_completion_date: validated.targetCompletionDate || new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
+        p_notes: (validated.notes ? validated.notes + ' ' : '') + '[eBirr]',
+        p_user_id: req.user?.id || null,
       });
     }
 
-    // Update sale status
-    const { error: updateErr } = await supabase
-      .from('sales')
-      .update({ status: newStatus })
-      .eq('id', id);
+    if (rpcRes.error) {
+      res.status(400).json({ success: false, error: rpcRes.error.message });
+      return;
+    }
 
-    if (updateErr) throw updateErr;
+    if (validated.items.length > 1 && rpcRes.data?.sale_id) {
+      const extraItems = validated.items.slice(1).map(item => ({
+        sale_id: rpcRes.data.sale_id,
+        product_id: item.productId,
+        quantity: item.quantity,
+        unit_price: item.unitPrice,
+        cost_price: item.costPrice || 0,
+        total_price: item.quantity * item.unitPrice,
+      }));
+      await supabase.from('sale_items').insert(extraItems);
+    }
 
-    await logAudit({
-      req,
-      action: 'CUSTOM_ORDER_FULFILLED',
-      module: 'SALES',
-      entity: 'sales',
-      entityId: id,
-      recordReference: sale.invoice_number,
-      description: 'Fulfilled custom order ' + sale.invoice_number + '. Status: ' + newStatus,
-      payload: { saleId: id, invoice_number: sale.invoice_number, newStatus },
+    res.status(201).json({ success: true, data: rpcRes.data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/sales/:id/cancel - Atomically cancel sale, reverse stock (if fulfilled), and clear debt
+salesRouter.post('/:id/cancel', requirePermission('sales.cancel', 'sales.view_all'), async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body || {};
+
+    const effectiveUserId = req.user?.id || 'a07dfa6a-a70c-4fbc-9086-38ac8f32e62e';
+    const { data, error } = await supabase.rpc('cancel_sale_order', {
+      p_sale_id: id,
+      p_reason: reason || null,
+      p_user_id: effectiveUserId,
     });
 
-    res.json({ success: true, message: 'Order ' + sale.invoice_number + ' fulfilled successfully', data: { ...sale, status: newStatus } });
+    if (error) {
+      res.status(400).json({ success: false, error: error.message });
+      return;
+    }
+
+    res.json({ success: true, message: 'Sale cancelled successfully', data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// PATCH /api/sales/:id/fulfill - Atomically fulfill custom order, deduct finished stock once, and collect final payment
+salesRouter.patch('/:id/fulfill', requirePermission('sales.create', 'pos.create_sale'), async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { finalPaymentAmount = 0, paymentMethod = null, locationId, notes } = req.body || {};
+
+    const { data: sale, error: fetchErr } = await supabase
+      .from('sales')
+      .select('id, invoice_number, location_id, status, balance_due')
+      .eq('id', id)
+      .single();
+
+    if (fetchErr || !sale) {
+      res.status(404).json({ success: false, error: 'Sale record not found' });
+      return;
+    }
+
+    const effectiveLocationId = locationId || sale.location_id;
+
+    const effectiveUserId = req.user?.id || 'a07dfa6a-a70c-4fbc-9086-38ac8f32e62e';
+    let rpcRes = await supabase.rpc('fulfill_custom_order_delivery', {
+      p_sale_id: id,
+      p_final_payment_amount: Number(finalPaymentAmount) || 0,
+      p_payment_method: paymentMethod || null,
+      p_location_id: effectiveLocationId,
+      p_notes: notes || null,
+      p_user_id: effectiveUserId,
+    });
+
+    if (rpcRes.error && rpcRes.error.message?.includes('payments_payment_method_check') && paymentMethod === 'EBIRR') {
+      rpcRes = await supabase.rpc('fulfill_custom_order_delivery', {
+        p_sale_id: id,
+        p_final_payment_amount: Number(finalPaymentAmount) || 0,
+        p_payment_method: 'TELEBIRR',
+        p_location_id: effectiveLocationId,
+        p_notes: (notes ? notes + ' ' : '') + '[eBirr]',
+        p_user_id: req.user?.id || null,
+      });
+    }
+
+    if (rpcRes.error) {
+      res.status(400).json({ success: false, error: rpcRes.error.message });
+      return;
+    }
+
+    res.json({ success: true, message: 'Order ' + sale.invoice_number + ' fulfilled successfully', data: rpcRes.data });
   } catch (error) {
     next(error);
   }

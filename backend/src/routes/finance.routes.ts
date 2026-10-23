@@ -128,7 +128,7 @@ financeRouter.get('/summary', requirePermission('reports.view_financial'), async
     let salesQuery = supabase
       .from('sales')
       .select('id, invoice_number, subtotal, discount_amount, total_amount, paid_amount, balance_due, status, created_at, location_id')
-      .neq('status', 'CANCELLED');
+      .in('status', ['PAID', 'PARTIAL', 'CREDIT']);
 
     salesQuery = applyDateFilter(salesQuery, 'created_at', startDate, endDate);
     if (locationId) salesQuery = salesQuery.eq('location_id', locationId);
@@ -176,7 +176,7 @@ financeRouter.get('/summary', requirePermission('reports.view_financial'), async
         quantity, cost_price, unit_price,
         sales!inner (id, status, created_at, location_id)
       `)
-      .neq('sales.status', 'CANCELLED');
+      .in('sales.status', ['PAID', 'PARTIAL', 'CREDIT']);
 
     saleItemsQuery = applyDateFilter(saleItemsQuery, 'sales.created_at', startDate, endDate);
     if (locationId) saleItemsQuery = saleItemsQuery.eq('sales.location_id', locationId);

@@ -48,3 +48,6 @@ Thumbs.db
 # Temporary caches
 .temp/
 supabase/.temp/
+
+# Local launcher metadata
+.claude-launcher/

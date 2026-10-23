@@ -66,7 +66,7 @@ interface SaleRecord {
   total_amount: number;
   paid_amount: number;
   balance_due: number;
-  status: 'PAID' | 'PARTIAL' | 'CREDIT' | 'PENDING_PRODUCTION';
+  status: 'PAID' | 'PARTIAL' | 'CREDIT' | 'PENDING_PRODUCTION' | 'READY_FOR_DELIVERY' | 'CANCELLED';
   created_at: string;
   customer?: { id: string; name: string; phone: string | null };
   location?: { id: string; name: string };
@@ -144,6 +144,7 @@ export const Sales: React.FC = () => {
   const [showCustomOrderModal, setShowCustomOrderModal] = useState(false);
   const [customOrderProduct, setCustomOrderProduct] = useState<any>(null);
   const [customOrderCustomerId, setCustomOrderCustomerId] = useState('');
+  const [customOrderQuantity, setCustomOrderQuantity] = useState('1');
   const [customOrderDeposit, setCustomOrderDeposit] = useState('');
   const [customOrderPaymentMethod, setCustomOrderPaymentMethod] = useState<'CASH' | 'EBIRR' | 'BANK_TRANSFER' | 'CBE_BIRR'>('CASH');
   const [customOrderNotes, setCustomOrderNotes] = useState('');
@@ -388,15 +389,18 @@ export const Sales: React.FC = () => {
 
     setCustomOrderSubmitting(true);
     try {
+      const targetQty = Math.max(1, Number(customOrderQuantity) || 1);
       const res = await authFetch(`${API_BASE}/sales/custom-order`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          invoiceNumber: nextInvoiceNumber,
           customerId: customOrderCustomerId,
           locationId: selectedLocationId,
           items: [{
             productId: customOrderProduct.id,
-            quantity: 1,
+            productName: customOrderProduct.name,
+            quantity: targetQty,
             unitPrice: Number(customOrderProduct.selling_price),
           }],
           depositAmount: Number(customOrderDeposit) || 0,
@@ -410,11 +414,13 @@ export const Sales: React.FC = () => {
         throw new Error(json.error || 'Failed to create custom order');
       }
 
-      alert(`Custom order created! Invoice: ${json.data?.invoice_number || 'Created'}. You can now create a manufacturing order for this product.`);
+      const invNo = json.data?.invoice_number || nextInvoiceNumber;
+      alert(`Custom order created! Invoice ${invNo} has been automatically linked to a production order in Manufacturing.`);
       setShowCustomOrderModal(false);
       setCustomOrderProduct(null);
       setCustomOrderCustomerId('');
       setCustomOrderDeposit('');
+      setCustomOrderQuantity('1');
       setCustomOrderNotes('');
       fetchData();
     } catch (err: any) {
@@ -424,28 +430,64 @@ export const Sales: React.FC = () => {
     }
   };
 
-  // Handle Fulfill PENDING_PRODUCTION sale
-  const handleFulfillSale = async (saleId: string) => {
-    if (!window.confirm('Fulfill this order? This will deduct stock and complete the sale.')) return;
-    
-    setFulfillingId(saleId);
-    try {
-      const res = await authFetch(`${API_BASE}/sales/${saleId}/fulfill`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-      });
+  // Handle Fulfill custom order sale
+  const handleFulfillSale = async (sale: any) => {
+    let finalPay = 0;
+    let payMethod: string | null = null;
 
-      const json = await res.json();
-      if (!res.ok || !json.success) {
-        throw new Error(json.error || 'Failed to fulfill order');
+    if (Number(sale.balance_due) > 0) {
+      const input = window.prompt(
+        "Order " + sale.invoice_number + " has balance due of ETB " + Number(sale.balance_due).toLocaleString() + ".\n\nEnter final payment collected at delivery (or 0 for credit):",
+        String(sale.balance_due)
+      );
+      if (input === null) return;
+      finalPay = Number(input) || 0;
+      if (finalPay > 0) {
+        const methodChoice = window.prompt("Enter payment method (CASH, BANK_TRANSFER, TELEBIRR, EBIRR):", "CASH");
+        payMethod = methodChoice ? methodChoice.toUpperCase() : "CASH";
       }
+    } else {
+      if (!window.confirm("Fulfill delivery for " + sale.invoice_number + "? This will deduct finished stock from inventory.")) return;
+    }
 
-      alert('Order fulfilled successfully! Stock has been deducted.');
+    setFulfillingId(sale.id);
+    try {
+      const res = await authFetch(API_BASE + "/sales/" + sale.id + "/fulfill", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          finalPaymentAmount: finalPay,
+          paymentMethod: payMethod,
+          locationId: sale.location_id || selectedLocationId,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || "Failed to fulfill order");
+      alert("Order " + sale.invoice_number + " fulfilled and delivered successfully! Finished stock has been deducted.");
       fetchData();
     } catch (err: any) {
-      alert(err.message || 'Error fulfilling order');
+      alert(err.message || "Error fulfilling order");
     } finally {
       setFulfillingId(null);
+    }
+  };
+
+  // Handle Cancel sale
+  const handleCancelSale = async (sale: any) => {
+    const reason = window.prompt("Cancel sale " + sale.invoice_number + "?\n\nAny deducted stock will be safely returned to inventory and customer debt cleared.\n\nReason (optional):");
+    if (reason === null) return;
+    try {
+      const res = await authFetch(API_BASE + "/sales/" + sale.id + "/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: reason || "Cancelled by staff" }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || "Failed to cancel sale");
+      alert("Sale " + sale.invoice_number + " cancelled successfully.");
+      fetchData();
+    } catch (err: any) {
+      alert(err.message || "Error cancelling sale");
     }
   };
 
@@ -568,7 +610,14 @@ export const Sales: React.FC = () => {
                   return (
                     <div
                       key={p.id}
-                      onClick={() => !isOutOfStock && addToCart(p)}
+                      onClick={() => {
+                        if (isOutOfStock) {
+                          setCustomOrderProduct(p);
+                          setShowCustomOrderModal(true);
+                        } else {
+                          addToCart(p);
+                        }
+                      }}
                       className={`bg-white rounded-2xl border p-4 flex flex-col justify-between transition-all select-none ${
                         isOutOfStock 
                           ? 'border-[#FEE2E2] cursor-default'
@@ -904,26 +953,42 @@ export const Sales: React.FC = () => {
                             ? 'bg-[#FEF3C7] text-[#92400E]'
                             : s.status === 'PENDING_PRODUCTION'
                             ? 'bg-[#FDF2F8] text-[#9D174D]'
+                            : s.status === 'READY_FOR_DELIVERY'
+                            ? 'bg-[#ECFDF5] text-[#065F46] border border-[#A7F3D0]'
+                            : s.status === 'CANCELLED'
+                            ? 'bg-[#FEF2F2] text-[#991B1B]'
                             : 'bg-[#EFF6FF] text-[#1D4ED8]'
                         }`}>
-                          {s.status === 'PENDING_PRODUCTION' ? 'MANUFACTURING' : s.status}
+                          {s.status === 'PENDING_PRODUCTION' ? 'MANUFACTURING' : s.status === 'READY_FOR_DELIVERY' ? 'READY TO DELIVER' : s.status}
                         </span>
                       </td>
                       <td className="py-3.5 px-4 text-right">
-                        {s.status === 'PENDING_PRODUCTION' && (
-                          <button
-                            onClick={() => handleFulfillSale(s.id)}
-                            disabled={fulfillingId === s.id}
-                            className="px-3 py-1.5 bg-[#276749] hover:bg-[#234A34] text-white text-[10px] font-bold rounded-lg shadow-xs transition-colors inline-flex items-center gap-1"
-                          >
-                            {fulfillingId === s.id ? (
-                              <Loader2 className="w-3 h-3 animate-spin" />
-                            ) : (
-                              <Package className="w-3 h-3" />
-                            )}
-                            Fulfill
-                          </button>
-                        )}
+                        <div className="flex items-center justify-end gap-1.5">
+                          {(s.status === 'PENDING_PRODUCTION' || s.status === 'READY_FOR_DELIVERY') && (
+                            <button
+                              onClick={() => handleFulfillSale(s)}
+                              disabled={fulfillingId === s.id}
+                              className="px-2.5 py-1.5 bg-[#276749] hover:bg-[#234A34] text-white text-[10px] font-bold rounded-lg shadow-xs transition-colors inline-flex items-center gap-1"
+                              title="Fulfill Delivery and Deduct Finished Stock"
+                            >
+                              {fulfillingId === s.id ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <Package className="w-3 h-3" />
+                              )}
+                              Fulfill Delivery
+                            </button>
+                          )}
+                          {s.status !== 'CANCELLED' && (
+                            <button
+                              onClick={() => handleCancelSale(s)}
+                              className="p-1.5 text-[#69736B] hover:text-[#DC2626] hover:bg-[#FEF2F2] rounded-lg transition-colors border border-transparent hover:border-[#FCA5A5]"
+                              title="Cancel Sale Order"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -1062,7 +1127,7 @@ export const Sales: React.FC = () => {
 
             <div className="p-6 space-y-4">
               <div className="bg-[#FEF3C7] border border-[#FDE68A] rounded-xl p-3 text-xs text-[#92400E]">
-                <strong>{customOrderProduct.name}</strong> is currently out of stock. Create a custom order to reserve it for a customer — then create a manufacturing order to produce it.
+                <strong>{customOrderProduct.name}</strong> is out of stock. Creating this custom order automatically generates and links a Production Order in Manufacturing.
               </div>
 
               <div>
@@ -1091,9 +1156,20 @@ export const Sales: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-[#202820] mb-1.5">Deposit Amount (ETB)</label>
+                  <label className="block text-xs font-semibold text-[#202820] mb-1.5">Quantity</label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={customOrderQuantity}
+                    onChange={e => setCustomOrderQuantity(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-white border border-[#E3E7E1] rounded-xl text-sm text-[#202820] focus:border-[#276749] focus:outline-hidden"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-[#202820] mb-1.5">Deposit (ETB)</label>
                   <input
                     type="number"
                     min="0"

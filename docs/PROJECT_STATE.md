@@ -109,3 +109,15 @@ c:\Users\engab\Music\Furniture\
   1. Address `ISSUE-P1-01`: Replace static mock datasets in `dashboard.routes.ts` with live database aggregation queries on `sales`, `stock_levels`, `production_orders`, and `inventory_movements`.
   2. Address `ISSUE-P1-02`: Implement a secure PostgreSQL RPC or provide `SUPABASE_SERVICE_ROLE_KEY` to allow employee account provisioning.
 
+
+
+## 9. Workflow Connection Fixes (October 23, 2026)
+- **Status:** VERIFIED
+- **Stack:** ERN (Express, React, Node.js, TypeScript) + Supabase (PostgreSQL)
+- **Changes:**
+  1. Atomic Custom Order & Manufacturing Linkage (create_custom_customer_order RPC).
+  2. Atomic Delivery & Stock Deduction (ulfill_custom_order_delivery RPC with final payment handling).
+  3. Atomic Safe Cancellation (cancel_sale_order & cancel_production_order RPCs with material reversal).
+  4. Accurate Revenue Recognition in Finance reports (unfulfilled custom orders excluded from revenue/COGS until fulfilled).
+  5. Frontend UI Action Connections in Sales.tsx, Customers.tsx, and Manufacturing.tsx.
+  6. Both ackend and rontend builds pass with 0 errors.
